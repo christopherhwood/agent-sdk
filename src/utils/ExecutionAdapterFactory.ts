@@ -24,6 +24,11 @@ export interface ExecutionAdapterFactoryOptions {
   autoFallback?: boolean;
 
   /**
+   * Whether to enable checkpointing (defaults to true)
+   */
+  checkpointingEnabled?: boolean;
+
+  /**
    * Docker-specific options
    */
   docker?: {
@@ -76,7 +81,7 @@ export async function createExecutionAdapter(options: ExecutionAdapterFactoryOpt
   adapter: ExecutionAdapter;
   type: ExecutionAdapterType;
 }> {
-  const { type = 'docker', autoFallback = true, logger } = options;
+  const { type = 'docker', autoFallback = true, checkpointingEnabled = true, logger } = options;
 
   logger?.info(
     `Creating execution adapter: Requested type = ${type}, default = docker`,
@@ -160,9 +165,13 @@ export async function createExecutionAdapter(options: ExecutionAdapterFactoryOpt
         throw new Error('Docker container failed to initialize');
       }
 
-      // Wrap with checkpointing
-      concreteAdapter = new CheckpointingExecutionAdapter(dockerAdapter, options.sessionId);
-      logger?.info('Wrapped Docker adapter with checkpointing', LogCategory.SYSTEM);
+      // Conditionally wrap with checkpointing
+      if (checkpointingEnabled) {
+        concreteAdapter = new CheckpointingExecutionAdapter(dockerAdapter, options.sessionId);
+        logger?.info('Wrapped Docker adapter with checkpointing', LogCategory.SYSTEM);
+      } else {
+        logger?.info('Checkpointing disabled for Docker adapter', LogCategory.SYSTEM);
+      }
 
       return {
         adapter: concreteAdapter,
@@ -192,8 +201,12 @@ export async function createExecutionAdapter(options: ExecutionAdapterFactoryOpt
       // Create concrete adapter
       let concreteAdapter: ExecutionAdapter = e2bAdapter;
 
-      concreteAdapter = new CheckpointingExecutionAdapter(e2bAdapter, options.sessionId);
-      logger?.info('Wrapped E2B adapter with checkpointing', LogCategory.SYSTEM);
+      if (checkpointingEnabled) {
+        concreteAdapter = new CheckpointingExecutionAdapter(e2bAdapter, options.sessionId);
+        logger?.info('Wrapped E2B adapter with checkpointing', LogCategory.SYSTEM);
+      } else {
+        logger?.info('Checkpointing disabled for E2B adapter', LogCategory.SYSTEM);
+      }
 
       return {
         adapter: concreteAdapter,
@@ -230,9 +243,13 @@ export async function createExecutionAdapter(options: ExecutionAdapterFactoryOpt
   });
   let concreteAdapter: ExecutionAdapter = localAdapter;
 
-  // Wrap with checkpointing
-  concreteAdapter = new CheckpointingExecutionAdapter(localAdapter, options.sessionId);
-  logger?.info('Wrapped local adapter with checkpointing', LogCategory.SYSTEM);
+  // Conditionally wrap with checkpointing
+  if (checkpointingEnabled) {
+    concreteAdapter = new CheckpointingExecutionAdapter(localAdapter, options.sessionId);
+    logger?.info('Wrapped local adapter with checkpointing', LogCategory.SYSTEM);
+  } else {
+    logger?.info('Checkpointing disabled for local adapter', LogCategory.SYSTEM);
+  }
 
   return {
     adapter: concreteAdapter,

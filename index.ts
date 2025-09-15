@@ -104,4 +104,7 @@ export type {
 
 export { BusEvent, BusEvents } from './src/types/bus-events.js';
 
+// Agent callbacks for lifecycle events
+export type { AgentCallbacks } from './src/types/callbacks.js';
+
 // Nothing else is exported – **intentional**.

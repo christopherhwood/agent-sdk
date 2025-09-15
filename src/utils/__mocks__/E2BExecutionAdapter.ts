@@ -1,5 +1,5 @@
 /**
- * Mock implementation of E2BExecutionAdapter
+ * Mock implementation of RemoteExecutionAdapter
  */
 import type { FileEditToolResult } from '../../tools/FileEditTool.js';
 import type { FileReadToolResult } from '../../tools/FileReadTool.js';
@@ -7,12 +7,12 @@ import type { LSToolResult } from '../../tools/LSTool.js';
 import type { GitRepositoryInfo } from '../../types/repository.js';
 import type { ExecutionAdapter } from '../../types/tool.js';
 
-export class E2BExecutionAdapter implements ExecutionAdapter {
+export class RemoteExecutionAdapter implements ExecutionAdapter {
   /**
    * Mock implementation
    */
-  public static async create(): Promise<E2BExecutionAdapter> {
-    return new E2BExecutionAdapter();
+  public static async create(): Promise<RemoteExecutionAdapter> {
+    return new RemoteExecutionAdapter();
   }
 
   async readFile(): Promise<FileReadToolResult> {

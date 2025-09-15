@@ -165,6 +165,7 @@ export const createAgent = async (config: CoreAgentConfig, sessionId: string): P
             projectsRoot: '/home/user/projects',
           },
           autoFallback: false,
+          checkpointingEnabled: false,
         });
 
         executionAdapter = adapter;
@@ -177,6 +178,7 @@ export const createAgent = async (config: CoreAgentConfig, sessionId: string): P
           logger: config.logger,
           projectsRoot: process.cwd(),
           autoFallback: true,
+          checkpointingEnabled: false,
         });
 
         executionAdapter = adapter;
@@ -267,6 +269,8 @@ export const createSessionState = async (
     eventBus: config.eventBus,
     projectsRoot: config.environment.type === 'remote' ? '/home/user/projects' : process.cwd(),
     autoFallback: false,
+    remote: config.environment.type === 'remote' ? { sandboxId: remoteId } : undefined,
+    checkpointingEnabled: false,
   });
 
   return {

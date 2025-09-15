@@ -465,6 +465,7 @@ export class AgentEngine implements Agent {
       eventBus: config.eventBus,
       projectsRoot: process.cwd(),
       autoFallback: false,
+      checkpointingEnabled: false,
     });
 
     return {

@@ -7,7 +7,7 @@
 import { ExecutionAdapter } from '../../types/tool.js';
 import { LocalExecutionAdapter } from '../LocalExecutionAdapter.js';
 import { DockerExecutionAdapter } from '../DockerExecutionAdapter.js';
-import { E2BExecutionAdapter } from '../E2BExecutionAdapter.js';
+import { RemoteExecutionAdapter } from '../RemoteExecutionAdapter.js';
 import { CheckpointingExecutionAdapter } from '../CheckpointingExecutionAdapter.js';
 
 // This test ensures that all ExecutionAdapter implementations match the interface signature

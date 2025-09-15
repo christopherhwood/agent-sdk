@@ -87,14 +87,14 @@ export class RemoteExecutionAdapter implements ExecutionAdapter {
   }
 
   /**
-   * Creates a new E2BExecutionAdapter instance with a connected sandbox
+   * Creates a new RemoteExecutionAdapter instance with a connected sandbox
    * @param sandboxId The ID of the sandbox to connect to
    * @param options Optional configuration options
    * @param sessionId
    * @param options.logger
    * @param options.projectsRoot
    * @param options.eventBus
-   * @returns A fully initialized E2BExecutionAdapter
+   * @returns A fully initialized RemoteExecutionAdapter
    * @throws Error if connection to the sandbox fails
    */
   public static async create(
@@ -110,7 +110,7 @@ export class RemoteExecutionAdapter implements ExecutionAdapter {
       // Emit initializing status before connecting
       options.logger?.info('E2B sandbox connecting...', LogCategory.SYSTEM);
       options.logger?.debug(
-        'E2BExecutionAdapter: Connecting to sandbox',
+        'RemoteExecutionAdapter: Connecting to sandbox',
         sandboxId,
         LogCategory.SYSTEM,
       );
@@ -495,7 +495,7 @@ export class RemoteExecutionAdapter implements ExecutionAdapter {
   async generateDirectoryMap(rootPath: string, maxDepth: number = 10): Promise<string> {
     try {
       this.logger?.debug(
-        `E2BExecutionAdapter: Generating directory map for ${rootPath} with max depth ${maxDepth}`,
+        `RemoteExecutionAdapter: Generating directory map for ${rootPath} with max depth ${maxDepth}`,
         LogCategory.SYSTEM,
       );
 
@@ -510,7 +510,7 @@ export class RemoteExecutionAdapter implements ExecutionAdapter {
       return result.stdout;
     } catch (error) {
       console.error(
-        `E2BExecutionAdapter: Error generating directory map: ${(error as Error).message}`,
+        `RemoteExecutionAdapter: Error generating directory map: ${(error as Error).message}`,
       );
 
       // Return a basic fallback structure on error
