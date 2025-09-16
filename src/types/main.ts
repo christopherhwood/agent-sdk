@@ -10,7 +10,7 @@ import type { TypedEventEmitter } from '../utils/TypedEventEmitter.js';
 import type { ProcessQueryResult } from './agent.js';
 import { ConversationResult } from './agent.js';
 import type { BusEvents } from './bus-events.js';
-import type { ModelClient, SessionState, ModelProvider } from './model.js';
+import type { ModelClient, SessionState, ModelProvider, ToolCall } from './model.js';
 import type { PermissionManager } from './permission.js';
 import type { ToolRegistry } from './registry.js';
 import { ToolExecutionEvent, ToolExecutionStatus } from './tool-execution/index.js';
@@ -157,6 +157,12 @@ export interface CoreAgentConfig {
    * The per-agent event bus used for all lifecycle notifications.
    */
   eventBus: TypedEventEmitter<BusEvents>;
+
+  /**
+   * Optional callback to provide additional feedback after tool execution completes
+   * @internal
+   */
+  getToolFeedback?: (toolCall: ToolCall, result: any) => Promise<string | void>;
 }
 
 /**

@@ -236,7 +236,7 @@ export class FsmDriver {
               },
               // Pass feedback function if available
               this.deps.getToolFeedback
-                ? async (result: any) => this.deps.getToolFeedback!(currentToolCall, result)
+                ? async (result: any) => this.deps.getToolFeedback!(currentToolCall!, result)
                 : undefined,
             );
           } catch (error) {

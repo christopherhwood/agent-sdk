@@ -30,6 +30,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
     promptManager = createDefaultPromptManager(),
     eventBus,
     logger,
+    getToolFeedback,
   } = config;
 
   return {
@@ -84,6 +85,7 @@ export function createAgentRunner(config: AgentRunnerConfig): AgentRunner {
           permissionManager,
           executionAdapter,
           logger,
+          getToolFeedback,
         });
 
         const {

@@ -193,6 +193,7 @@ export const createAgent = async (config: CoreAgentConfig, sessionId: string): P
       eventBus: config.eventBus,
       executionAdapter,
       promptManager: config.promptManager || createDefaultPromptManager(),
+      getToolFeedback: config.getToolFeedback,
     });
   };
 

@@ -166,7 +166,7 @@ export class AgentEngine implements Agent {
       toolRegistry,
       permissionManager,
       modelClient,
-      getToolFeedback: (config as any).getToolFeedback,
+      getToolFeedback: config.getToolFeedback,
     });
   }
 

@@ -9,7 +9,7 @@ import type { TypedEventEmitter } from '../utils/TypedEventEmitter.js';
 
 import type { BusEvents } from './bus-events.js';
 import type { ContextWindow } from './contextWindow.js';
-import type { ModelClient } from './model.js';
+import type { ModelClient, ToolCall } from './model.js';
 import type { PermissionManager } from './permission.js';
 import type { ToolRegistry } from './registry.js';
 import type { ExecutionAdapter } from './tool.js';
@@ -23,6 +23,7 @@ export interface AgentRunnerConfig {
   promptManager: PromptManager;
   eventBus: TypedEventEmitter<BusEvents>;
   logger: Logger;
+  getToolFeedback?: (toolCall: ToolCall, result: any) => Promise<string | void>;
 }
 
 /** @internal */

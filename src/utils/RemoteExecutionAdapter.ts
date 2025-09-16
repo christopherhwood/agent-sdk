@@ -241,13 +241,38 @@ export class RemoteExecutionAdapter implements ExecutionAdapter {
 
   async writeFile(executionId: string, filepath: string, content: string) {
     this.logger?.debug(`writeFile: ${filepath}`, LogCategory.TOOLS);
-    const result = await this.sandbox.files.write(filepath, content);
-    this.logger?.debug(`writeFile result: ${result}`, LogCategory.TOOLS);
+
+    // Check if content is base64 encoded binary data
+    // Simple heuristic: if it's valid base64 and doesn't contain newlines, treat as binary
+    const isBase64Binary =
+      /^[A-Za-z0-9+/]+=*$/.test(content.replace(/\s/g, '')) &&
+      content.length > 100 &&
+      !content.includes('\n');
+
+    if (isBase64Binary) {
+      // Convert base64 to buffer for binary files
+      const buffer = Buffer.from(content, 'base64');
+      const result = await this.sandbox.files.write(filepath, buffer);
+      this.logger?.debug(`writeFile (binary) result: ${result}`, LogCategory.TOOLS);
+    } else {
+      // Write as text for regular files
+      const result = await this.sandbox.files.write(filepath, content);
+      this.logger?.debug(`writeFile (text) result: ${result}`, LogCategory.TOOLS);
+    }
     return;
   }
 
-  async executeCommand(executionId: string, command: string, workingDir?: string) {
-    return await this.sandbox.commands.run(command, { cwd: workingDir });
+  async executeCommand(
+    executionId: string,
+    command: string,
+    workingDir?: string,
+    checkpoint?: boolean,
+    timeoutMs?: number,
+  ) {
+    return await this.sandbox.commands.run(command, {
+      cwd: workingDir,
+      timeoutMs: timeoutMs,
+    });
   }
 
   async glob(executionId: string, pattern: string, _options?: any): Promise<string[]> {
