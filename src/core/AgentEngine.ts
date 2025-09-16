@@ -166,6 +166,7 @@ export class AgentEngine implements Agent {
       toolRegistry,
       permissionManager,
       modelClient,
+      getToolFeedback: (config as any).getToolFeedback,
     });
   }
 
@@ -179,12 +180,14 @@ export class AgentEngine implements Agent {
     toolRegistry: ToolRegistry;
     permissionManager: PermissionManager;
     modelClient: ReturnType<typeof createModelClient>;
+    getToolFeedback?: (toolCall: any, result: any) => Promise<string | void>;
   }) {
     this._config = args.config;
     this._logger = args.logger;
     this._toolRegistry = args.toolRegistry;
     this._permissionManager = args.permissionManager;
     this._modelClient = args.modelClient;
+    this._getToolFeedback = args.getToolFeedback;
   }
 
   // -----------------------------------------------------------------------
@@ -196,6 +199,7 @@ export class AgentEngine implements Agent {
   private readonly _toolRegistry: ToolRegistry;
   private readonly _permissionManager: PermissionManager;
   private readonly _modelClient: ReturnType<typeof createModelClient>;
+  private readonly _getToolFeedback?: (toolCall: any, result: any) => Promise<string | void>;
 
   // -----------------------------------------------------------------------
   // Public read-only accessors (part of Agent interface)
@@ -376,6 +380,7 @@ export class AgentEngine implements Agent {
         permissionManager: this._permissionManager,
         executionAdapter,
         logger: this._logger,
+        getToolFeedback: this._getToolFeedback,
       });
 
       const {

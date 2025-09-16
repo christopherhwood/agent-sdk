@@ -32,42 +32,43 @@ export interface LifecycleCallbacks {
   /**
    * Called when a query processing starts
    */
-  onProcessingStarted?: (data: ProcessingStartedData) => void;
+  onProcessingStarted?: (data: ProcessingStartedData) => void | Promise<void>;
 
   /**
    * Called when a query processing completes successfully
    */
-  onProcessingCompleted?: (data: ProcessingCompletedData) => void;
+  onProcessingCompleted?: (data: ProcessingCompletedData) => void | Promise<void>;
 
   /**
    * Called when a query processing encounters an error
    */
-  onProcessingError?: (data: ProcessingErrorData) => void;
+  onProcessingError?: (data: ProcessingErrorData) => void | Promise<void>;
 
   /**
    * Called when a query processing is aborted
    */
-  onProcessingAborted?: ({ sessionId }: { sessionId: string }) => void;
+  onProcessingAborted?: ({ sessionId }: { sessionId: string }) => void | Promise<void>;
 
   /**
    * Called when a tool execution starts
    */
-  onToolExecutionStarted?: (execution: ToolExecutionState) => void;
+  onToolExecutionStarted?: (execution: ToolExecutionState) => void | Promise<void>;
 
   /**
    * Called when a tool execution completes successfully
+   * Can optionally return additional information to be included in the tool result
    */
-  onToolExecutionCompleted?: (execution: ToolExecutionState) => void;
+  onToolExecutionCompleted?: (execution: ToolExecutionState) => Promise<string | void>;
 
   /**
    * Called when a tool execution encounters an error
    */
-  onToolExecutionError?: (execution: ToolExecutionState) => void;
+  onToolExecutionError?: (execution: ToolExecutionState) => void | Promise<void>;
 
   /**
    * Called when the environment status changes
    */
-  onEnvironmentStatusChanged?: (status: EnvironmentStatusData) => void;
+  onEnvironmentStatusChanged?: (status: EnvironmentStatusData) => void | Promise<void>;
 
   /**
    * Called when a checkpoint is ready

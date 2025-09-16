@@ -27,6 +27,7 @@ interface DriverDeps {
   permissionManager: PermissionManager;
   executionAdapter: ExecutionAdapter;
   logger: Logger;
+  getToolFeedback?: (toolCall: ToolCall, result: any) => Promise<string | void>;
 }
 
 /** @internal */
@@ -233,6 +234,10 @@ export class FsmDriver {
                 toolRegistry,
                 abortSignal: sessionState.abortController?.signal,
               },
+              // Pass feedback function if available
+              this.deps.getToolFeedback
+                ? async (result: any) => this.deps.getToolFeedback!(currentToolCall, result)
+                : undefined,
             );
           } catch (error) {
             // withToolCall handles errors internally, we just need to check for abort

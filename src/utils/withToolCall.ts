@@ -16,6 +16,7 @@ import type { ToolContext } from '../types/tool.js';
  * @param toolResults
  * @param exec
  * @param context
+ * @param getToolFeedback Optional function that can return additional information about the tool result
  */
 export async function withToolCall(
   toolCall: ToolCall,
@@ -23,6 +24,7 @@ export async function withToolCall(
   toolResults: ToolResultEntry[],
   exec: (ctx: ToolContext) => Promise<ToolResult>,
   context: ToolContext,
+  getToolFeedback?: (result: any) => Promise<string | void>,
 ): Promise<unknown> {
   context.logger?.debug(
     `[withToolCall] Executing tool ${toolCall.toolId}, abortSignal=${context.abortSignal?.aborted}`,
@@ -91,6 +93,24 @@ export async function withToolCall(
       } else {
         // Clear previous error on success
         delete sessionState.lastToolError;
+      }
+    }
+
+    // --------------------------------------------------------------
+    // Get additional information from feedback function if provided
+    // --------------------------------------------------------------
+    if (getToolFeedback && !aborted && result && typeof result === 'object') {
+      try {
+        const additionalInfo = await getToolFeedback(result);
+        if (additionalInfo && typeof additionalInfo === 'string') {
+          // Add additionalInformation to the result object
+          (result as any).additionalInformation = additionalInfo;
+        }
+      } catch (err) {
+        context.logger?.warn(
+          `[withToolCall] Failed to get tool feedback: ${err}`,
+          LogCategory.TOOLS,
+        );
       }
     }
 

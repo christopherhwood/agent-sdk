@@ -16,7 +16,8 @@ import type { ContextWindow, Message } from './types/contextWindow.js';
 import { createContextWindow } from './types/contextWindow.js';
 import type { Agent as AgentInterface, CoreAgentConfig } from './types/main.js';
 import { ToolExecutionStatus } from './types/main.js';
-import type { SessionState } from './types/model.js';
+import type { SessionState, ToolCall } from './types/model.js';
+import type { ToolExecutionState } from './types/tool-execution/index.js';
 import type { Tool } from './types/tool.js';
 import { convertToCoreAgentConfig } from './utils/agent-config-converter.js';
 import type { Logger } from './utils/logger.js';
@@ -53,10 +54,37 @@ export class Agent {
   private _config!: CoreAgentConfig;
   private _callbacks?: AgentCallbacks;
   private _sessionState!: SessionState;
-
   // ---------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------
+
+  /**
+   * Get feedback for a tool execution result
+   * This method bridges the callback system with the direct feedback path
+   */
+  private async getToolFeedback(toolCall: ToolCall, result: any): Promise<string | void> {
+    if (!this._callbacks?.onToolExecutionCompleted) {
+      return;
+    }
+
+    // Build a ToolExecutionState object from the toolCall and result
+    const executionState: ToolExecutionState = {
+      id: toolCall.toolUseId || '',
+      sessionId: this._sessionState?.id || '',
+      toolId: toolCall.toolId,
+      toolName: toolCall.toolId, // Using toolId as toolName for now
+      args: toolCall.args as Record<string, unknown>,
+      result,
+      status: result?.ok === false ? ToolExecutionStatus.ERROR : ToolExecutionStatus.COMPLETED,
+      startTime: new Date().toISOString(),
+      endTime: new Date().toISOString(),
+      executionTime: 0,
+      toolUseId: toolCall.toolUseId,
+    };
+
+    // Call the callback and return any feedback
+    return await this._callbacks.onToolExecutionCompleted(executionState);
+  }
 
   /**
    * Ensure REMOTE_ID env var is populated once per process when using the
@@ -227,8 +255,14 @@ export class Agent {
   private async _init(): Promise<void> {
     this._sessionState = await createSessionState(this._config);
 
+    // Add the feedback function to the config
+    const configWithFeedback = {
+      ...this._config,
+      getToolFeedback: this.getToolFeedback.bind(this),
+    };
+
     // Initialize the core agent (no environment transformation needed)
-    this._core = await createAgent(this._config, this._sessionState.id);
+    this._core = await createAgent(configWithFeedback, this._sessionState.id);
 
     // Bridge tool-registry events now that _core is available
     this._setupToolRegistryBridges();

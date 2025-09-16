@@ -10,12 +10,20 @@
         },
         "environment": {
           "type": "string",
-          "enum": ["local", "remote"],
+          "enum": [
+            "local",
+            "remote"
+          ],
           "default": "local"
         },
         "logLevel": {
           "type": "string",
-          "enum": ["debug", "info", "warn", "error"],
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
           "default": "error"
         },
         "systemPrompt": {
@@ -42,7 +50,10 @@
                     "type": "string"
                   }
                 },
-                "required": ["name", "configFile"],
+                "required": [
+                  "name",
+                  "configFile"
+                ],
                 "additionalProperties": false
               }
             ]
