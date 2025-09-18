@@ -63,6 +63,11 @@ export function convertToCoreAgentConfig(
     config.systemPrompt = jsonConfig.systemPrompt;
   }
 
+  // Temperature (optional)
+  if (typeof (jsonConfig as any).temperature === 'number') {
+    (config as any).temperature = (jsonConfig as any).temperature;
+  }
+
   if (jsonConfig.logLevel !== undefined) {
     // jsonConfig.logLevel is validated by the schema; cast to LogLevel for internal use
     config.logLevel = jsonConfig.logLevel as unknown as LogLevel;

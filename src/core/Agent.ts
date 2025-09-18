@@ -74,7 +74,7 @@ export const createAgent = async (config: CoreAgentConfig, sessionId: string): P
       promptText = fs.readFileSync(promptPath, 'utf8');
     }
 
-    promptManager = createPromptManager(promptText);
+    promptManager = createPromptManager(promptText, config.temperature);
   }
 
   const modelClient = createModelClient({
@@ -192,7 +192,7 @@ export const createAgent = async (config: CoreAgentConfig, sessionId: string): P
       logger,
       eventBus: config.eventBus,
       executionAdapter,
-      promptManager: config.promptManager || createDefaultPromptManager(),
+      promptManager: config.promptManager || createDefaultPromptManager(config.temperature),
       getToolFeedback: config.getToolFeedback,
     });
   };

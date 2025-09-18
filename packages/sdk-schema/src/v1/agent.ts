@@ -34,6 +34,12 @@ export const AgentConfigSchemaV1 = z
     logLevel: LogLevelSchema.optional().default('error'),
     systemPrompt: z.string().optional().default(DEFAULT_SYSTEM_PROMPT),
     /**
+     * Sampling temperature for the LLM (0.0–1.0). If omitted, SDK defaults
+     * are used. Lower values make the model more deterministic; higher values
+     * yield more diverse outputs.
+     */
+    temperature: z.number().min(0).max(1).optional(),
+    /**
      * Optional human-readable description of the agent’s purpose and
      * capabilities.  This is surfaced when the agent is exposed as a
      * sub-agent tool so the parent LLM can decide when to invoke it.

@@ -103,7 +103,7 @@ export class AgentEngine implements Agent {
         typeof config.systemPrompt === 'string'
           ? config.systemPrompt
           : fs.readFileSync(path.resolve(process.cwd(), config.systemPrompt.file), 'utf8');
-      promptManager = createPromptManager(promptText);
+      promptManager = createPromptManager(promptText, config.temperature);
     }
 
     // 3) Model client (wraps the provided LLM provider)
@@ -257,11 +257,11 @@ export class AgentEngine implements Agent {
 
         // The prompt manager lives on the engine, not the adapter.
         (
-          this._config.promptManager || createDefaultPromptManager()
+          this._config.promptManager || createDefaultPromptManager(this._config.temperature)
         ).setMultiRepoDirectoryStructures(directoryStructures);
-        (this._config.promptManager || createDefaultPromptManager()).setMultiRepoGitStates(
-          gitRepos,
-        );
+        (
+          this._config.promptManager || createDefaultPromptManager(this._config.temperature)
+        ).setMultiRepoGitStates(gitRepos);
 
         const repoPaths = Array.from(directoryStructures.keys());
         sessionState.multiRepoTracking = {

@@ -75,6 +75,12 @@ export interface CoreAgentConfig {
   systemPrompt?: string | { file: string };
 
   /**
+   * Optional sampling temperature applied via the PromptManager. Range 0.0–1.0.
+   * If omitted, the PromptManager's internal default is used.
+   */
+  temperature?: number;
+
+  /**
    * Optional logger interface for agent logs
    * If not provided, a default logger will be created
    */
