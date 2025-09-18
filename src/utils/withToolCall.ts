@@ -1,7 +1,7 @@
 import type { ToolResultEntry } from '../types/agent.js';
 import { LogCategory } from '../types/logger.js';
 import type { ToolCall, SessionState } from '../types/model.js';
-import type { ToolResult } from '../types/tool-result.js';
+import type { ToolResult, ToolFeedback } from '../types/tool-result.js';
 import { LastToolError } from '../types/tool-result.js';
 import type { ToolContext } from '../types/tool.js';
 
@@ -24,13 +24,13 @@ export async function withToolCall(
   toolResults: ToolResultEntry[],
   exec: (ctx: ToolContext) => Promise<ToolResult>,
   context: ToolContext,
-  getToolFeedback?: (result: any) => Promise<string | void>,
-): Promise<unknown> {
+  getToolFeedback?: (result: ToolResult) => Promise<ToolFeedback | void>,
+): Promise<ToolResult> {
   context.logger?.debug(
     `[withToolCall] Executing tool ${toolCall.toolId}, abortSignal=${context.abortSignal?.aborted}`,
     LogCategory.TOOLS,
   );
-  let result: unknown;
+  let result: ToolResult;
   let aborted = false;
 
   try {
@@ -41,7 +41,7 @@ export async function withToolCall(
       // resolve promptly when the caller aborts – even if the underlying tool
       // ignores the signal.
       if (context.abortSignal) {
-        result = await Promise.race([
+        result = (await Promise.race([
           execPromise,
           new Promise<unknown>((_, reject) => {
             const onAbort = () => {
@@ -61,7 +61,7 @@ export async function withToolCall(
             }
             context.abortSignal!.addEventListener('abort', onAbort);
           }),
-        ]);
+        ])) as ToolResult;
       } else {
         result = await execPromise;
       }
@@ -72,39 +72,36 @@ export async function withToolCall(
           LogCategory.TOOLS,
         );
         aborted = true;
-        // Surface a simple aborted marker so tests (and callers) can detect it
-        result = { aborted: true };
+        // Return a typed error result for aborts
+        result = { ok: false, error: 'AbortError' };
       } else {
-        result = { error: String(err) };
+        result = { ok: false, error: String(err) };
       }
     }
 
     // --------------------------------------------------------------
     // Check if tool returned a typed error and set lastToolError
     // --------------------------------------------------------------
-    if (result && typeof result === 'object' && 'ok' in result) {
-      const toolResult = result as ToolResult;
-      if (!toolResult.ok) {
-        sessionState.lastToolError = {
-          toolId: toolCall.toolId,
-          error: toolResult.error,
-          args: toolCall.args as Record<string, unknown>,
-        };
-      } else {
-        // Clear previous error on success
-        delete sessionState.lastToolError;
-      }
+    if (!result.ok) {
+      sessionState.lastToolError = {
+        toolId: toolCall.toolId,
+        error: result.error,
+        args: toolCall.args as Record<string, unknown>,
+      };
+    } else {
+      // Clear previous error on success
+      delete sessionState.lastToolError;
     }
 
     // --------------------------------------------------------------
     // Get additional information from feedback function if provided
     // --------------------------------------------------------------
-    if (getToolFeedback && !aborted && result && typeof result === 'object') {
+    if (getToolFeedback && !aborted) {
       try {
         const additionalInfo = await getToolFeedback(result);
-        if (additionalInfo && typeof additionalInfo === 'string') {
-          // Add additionalInformation to the result object
-          (result as any).additionalInformation = additionalInfo;
+        if (additionalInfo) {
+          // Non-mutating enrichment to avoid touching tool return objects
+          result = { ...result, additionalInformation: additionalInfo };
         }
       } catch (err) {
         context.logger?.warn(

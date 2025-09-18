@@ -6,6 +6,7 @@
 import type { PromptManager } from '../core/PromptManager.js';
 import type { Logger } from '../utils/logger.js';
 import type { TypedEventEmitter } from '../utils/TypedEventEmitter.js';
+import type { ToolFeedback, ToolResult } from './tool-result.js';
 
 import type { BusEvents } from './bus-events.js';
 import type { ContextWindow } from './contextWindow.js';
@@ -23,7 +24,7 @@ export interface AgentRunnerConfig {
   promptManager: PromptManager;
   eventBus: TypedEventEmitter<BusEvents>;
   logger: Logger;
-  getToolFeedback?: (toolCall: ToolCall, result: any) => Promise<string | void>;
+  getToolFeedback?: (toolCall: ToolCall, result: ToolResult) => Promise<ToolFeedback | void>;
 }
 
 /** @internal */

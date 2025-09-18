@@ -2,12 +2,36 @@
  * Discriminated union types for tool execution results
  */
 
-export interface ToolSuccess<Data = unknown> {
+export interface ToolFeedback {
+  text?: string;
+  attachments?: Attachment[];
+}
+
+export type Attachment = ImageAttachment;
+
+export interface ImageAttachment {
+  kind: 'image';
+  // Prefer workspace-relative path; provider may read and base64 it.
+  path?: string;
+  // Alternatively, direct base64 or URL can be supplied.
+  dataBase64?: string;
+  url?: string;
+  mime?: 'image/png' | 'image/jpeg' | 'image/webp';
+  width?: number;
+  height?: number;
+  alt?: string;
+}
+
+interface WithAdditionalInformation {
+  additionalInformation?: ToolFeedback;
+}
+
+export interface ToolSuccess<Data = unknown> extends WithAdditionalInformation {
   ok: true;
   data: Data;
 }
 
-export interface ToolError {
+export interface ToolError extends WithAdditionalInformation {
   ok: false;
   error: string;
 }

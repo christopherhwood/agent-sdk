@@ -9,6 +9,7 @@ import type { ToolResultEntry } from '../types/agent.js';
 import type { LLM } from '../types/llm.js';
 import { isTextBlock } from '../types/llm.js';
 import type { ModelClient, SessionState, ToolCall } from '../types/model.js';
+import type { ToolFeedback, ToolResult } from '../types/tool-result.js';
 import type { PermissionManager } from '../types/permission.js';
 import type { ToolRegistry } from '../types/registry.js';
 import type { ExecutionAdapter } from '../types/tool.js';
@@ -27,7 +28,7 @@ interface DriverDeps {
   permissionManager: PermissionManager;
   executionAdapter: ExecutionAdapter;
   logger: Logger;
-  getToolFeedback?: (toolCall: ToolCall, result: any) => Promise<string | void>;
+  getToolFeedback?: (toolCall: ToolCall, result: ToolResult) => Promise<ToolFeedback | void>;
 }
 
 /** @internal */
@@ -236,7 +237,7 @@ export class FsmDriver {
               },
               // Pass feedback function if available
               this.deps.getToolFeedback
-                ? async (result: any) => this.deps.getToolFeedback!(currentToolCall!, result)
+                ? async (result: ToolResult) => this.deps.getToolFeedback!(currentToolCall!, result)
                 : undefined,
             );
           } catch (error) {

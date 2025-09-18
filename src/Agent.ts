@@ -17,6 +17,7 @@ import { createContextWindow } from './types/contextWindow.js';
 import type { Agent as AgentInterface, CoreAgentConfig } from './types/main.js';
 import { ToolExecutionStatus } from './types/main.js';
 import type { SessionState, ToolCall } from './types/model.js';
+import type { ToolFeedback, ToolResult } from './types/tool-result.js';
 import type { ToolExecutionState } from './types/tool-execution/index.js';
 import type { Tool } from './types/tool.js';
 import { convertToCoreAgentConfig } from './utils/agent-config-converter.js';
@@ -61,8 +62,13 @@ export class Agent {
   /**
    * Get feedback for a tool execution result
    * This method bridges the callback system with the direct feedback path
+   * @param toolCall
+   * @param result
    */
-  private async getToolFeedback(toolCall: ToolCall, result: any): Promise<string | void> {
+  private async getToolFeedback(
+    toolCall: ToolCall,
+    result: ToolResult,
+  ): Promise<ToolFeedback | void> {
     if (!this._callbacks?.onToolExecutionCompleted) {
       return;
     }

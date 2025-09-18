@@ -14,6 +14,8 @@
 // actual client instance is no longer used for the `create` call – doing so
 // would require an Anthropic API key, which we no longer need once the request
 // is proxied to OpenAI.
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
 import type {
@@ -139,6 +141,21 @@ function convertMessageToOpenAI(msg: LLM.Messages.MessageParam): ChatCompletionM
       } as unknown as ChatCompletionMessageParam;
     }
 
+    // Multimodal user message: pass through an array of text/image_url parts
+    if (Array.isArray(msg.content)) {
+      const parts: any[] = [];
+      for (const c of msg.content as any[]) {
+        if (c?.type === 'text' && typeof c.text === 'string') {
+          parts.push({ type: 'text', text: c.text });
+        } else if (c?.type === 'image_url' && c.image_url && typeof c.image_url.url === 'string') {
+          parts.push({ type: 'image_url', image_url: { url: c.image_url.url } });
+        }
+      }
+      if (parts.length > 0) {
+        return { role: 'user', content: parts } as unknown as ChatCompletionMessageParam;
+      }
+    }
+
     // If we cannot identify the originating tool call, treat it as a plain user
     // message so that we do not violate the OpenAI schema (which requires
     // tool_call_id for `role:"tool"`).
@@ -192,6 +209,116 @@ function convertAnthropicRequestToOpenAI(apiParams: any): ChatCompletionCreatePa
     // The OpenAI type expects ChatCompletionToolChoiceOption or undefined.
     tool_choice: apiParams.tool_choice?.type as ChatCompletionToolChoiceOption | undefined,
   } satisfies ChatCompletionCreateParams;
+}
+
+// ---------------------------------------------------------------------------
+// Vision attachment injection helpers
+// ---------------------------------------------------------------------------
+
+type ToolFeedback = {
+  text?: string;
+  attachments?: Array<{
+    kind: 'image';
+    path?: string;
+    dataBase64?: string;
+    url?: string;
+    mime?: 'image/png' | 'image/jpeg' | 'image/webp';
+    width?: number;
+    height?: number;
+    alt?: string;
+  }>;
+};
+
+/**
+ *
+ * @param original
+ * @param model
+ * @param logger
+ */
+async function injectVisionMessages(
+  original: LLM.Messages.MessageParam[],
+  model: string,
+  logger?: Logger,
+): Promise<LLM.Messages.MessageParam[]> {
+  // Assume model supports vision; inject when attachments are present
+
+  const MAX_BYTES = 10 * 1024 * 1024; // 10MB
+  const augmented: LLM.Messages.MessageParam[] = [];
+
+  for (const msg of original) {
+    augmented.push(msg);
+    if (msg.role !== 'user') continue;
+    const contentArr = Array.isArray(msg.content) ? (msg.content as any[]) : null;
+    if (!contentArr || contentArr.length === 0) continue;
+    const first = contentArr[0] as any;
+    if (first?.type !== 'tool_result') continue;
+
+    let parsed: any = undefined;
+    try {
+      parsed = JSON.parse(first.content ?? '{}');
+    } catch {
+      continue;
+    }
+
+    const feedback: ToolFeedback | undefined = parsed?.additionalInformation as
+      | ToolFeedback
+      | undefined;
+    const images = Array.isArray(feedback?.attachments)
+      ? feedback!.attachments!.filter(a => a && a.kind === 'image')
+      : [];
+    if (images.length === 0) continue;
+
+    const parts: any[] = [];
+    for (const att of images) {
+      let url: string | undefined = att.url;
+      if (!url && att.dataBase64) {
+        const mime = att.mime || 'image/png';
+        url = `data:${mime};base64,${att.dataBase64}`;
+      }
+      if (!url && att.path) {
+        try {
+          const abs = path.resolve(process.cwd(), att.path);
+          const buf = await fs.readFile(abs);
+          if (buf.byteLength > MAX_BYTES) {
+            logger?.warn('Skipping image: file too large', LogCategory.MODEL, {
+              path: att.path,
+              bytes: buf.byteLength,
+            });
+            continue;
+          }
+          const mime =
+            att.mime ||
+            (att.path.toLowerCase().endsWith('.jpg') || att.path.toLowerCase().endsWith('.jpeg')
+              ? 'image/jpeg'
+              : att.path.toLowerCase().endsWith('.webp')
+                ? 'image/webp'
+                : 'image/png');
+          url = `data:${mime};base64,${buf.toString('base64')}`;
+        } catch (e) {
+          logger?.warn('Failed to read image from path for vision injection', LogCategory.MODEL, {
+            path: att.path,
+            error: e instanceof Error ? e.message : String(e),
+          });
+          continue;
+        }
+      }
+      if (!url) continue;
+
+      if (att.alt && typeof att.alt === 'string' && att.alt.trim().length > 0) {
+        parts.push({ type: 'text', text: att.alt });
+      }
+      parts.push({ type: 'image_url', image_url: { url } });
+    }
+
+    if (parts.length > 0) {
+      augmented.push({ role: 'user', content: parts } as unknown as LLM.Messages.MessageParam);
+      logger?.info('Injected vision user message after tool_result', LogCategory.MODEL, {
+        images: parts.filter(p => p.type === 'image_url').length,
+      });
+    }
+  }
+
+  return augmented;
 }
 
 /**
@@ -855,6 +982,19 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
       } else {
         // For non-cached requests with older style, system is a simple string
         apiParams.system = prompt.systemMessage;
+      }
+
+      // Inject vision messages (images from tool_result attachments)
+      try {
+        apiParams.messages = await injectVisionMessages(
+          apiParams.messages as LLM.Messages.MessageParam[],
+          modelToUse,
+          logger,
+        );
+      } catch (e) {
+        logger?.warn('Vision injection failed; continuing without images', LogCategory.MODEL, {
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
 
       // Add tools if provided (for tool use mode)

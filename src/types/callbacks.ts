@@ -12,6 +12,7 @@ import type {
   PermissionData,
 } from './events.js';
 import type { ToolExecutionState } from './tool-execution/index.js';
+import type { ToolFeedback } from './tool-result.js';
 
 /**
  * Dynamic data providers
@@ -58,7 +59,7 @@ export interface LifecycleCallbacks {
    * Called when a tool execution completes successfully
    * Can optionally return additional information to be included in the tool result
    */
-  onToolExecutionCompleted?: (execution: ToolExecutionState) => Promise<string | void>;
+  onToolExecutionCompleted?: (execution: ToolExecutionState) => Promise<ToolFeedback | void>;
 
   /**
    * Called when a tool execution encounters an error

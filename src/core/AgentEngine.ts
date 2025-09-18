@@ -32,7 +32,8 @@ import { BusEvent } from '../types/bus-events.js';
 import type { ContextWindow } from '../types/contextWindow.js';
 import { createContextWindow } from '../types/contextWindow.js';
 import type { Agent, CoreAgentConfig } from '../types/main.js';
-import type { SessionState, ModelProvider } from '../types/model.js';
+import type { SessionState, ModelProvider, ToolCall } from '../types/model.js';
+import type { ToolFeedback, ToolResult } from '../types/tool-result.js';
 import type { PermissionManager } from '../types/permission.js';
 import type { ToolRegistry } from '../types/registry.js';
 import type { Tool, ExecutionAdapter } from '../types/tool.js';
@@ -180,7 +181,7 @@ export class AgentEngine implements Agent {
     toolRegistry: ToolRegistry;
     permissionManager: PermissionManager;
     modelClient: ReturnType<typeof createModelClient>;
-    getToolFeedback?: (toolCall: any, result: any) => Promise<string | void>;
+    getToolFeedback?: (toolCall: ToolCall, result: ToolResult) => Promise<ToolFeedback | void>;
   }) {
     this._config = args.config;
     this._logger = args.logger;
@@ -199,7 +200,10 @@ export class AgentEngine implements Agent {
   private readonly _toolRegistry: ToolRegistry;
   private readonly _permissionManager: PermissionManager;
   private readonly _modelClient: ReturnType<typeof createModelClient>;
-  private readonly _getToolFeedback?: (toolCall: any, result: any) => Promise<string | void>;
+  private readonly _getToolFeedback?: (
+    toolCall: ToolCall,
+    result: ToolResult,
+  ) => Promise<ToolFeedback | void>;
 
   // -----------------------------------------------------------------------
   // Public read-only accessors (part of Agent interface)
