@@ -45,7 +45,16 @@ export interface ToolResultBlock {
   cache_control?: CacheControl;
 }
 
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+// Minimal image block to support multimodal user messages.
+export interface ImageURLBlock {
+  type: 'image_url';
+  image_url: {
+    url: string; // May be a data: URL or a fetchable HTTPS URL
+    detail?: 'low' | 'high' | 'auto';
+  };
+}
+
+export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock | ImageURLBlock;
 export type ContentBlockParam = ContentBlock | string;
 export type ContentBlockWithCache = ContentBlock;
 

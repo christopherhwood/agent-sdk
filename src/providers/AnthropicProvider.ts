@@ -880,10 +880,18 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
             const content = modifiedMessages[i].content;
 
             if (Array.isArray(content) && content.length > 0) {
-              // Add cache_control to the last content block
+              // Add cache_control to the last content block when it's text-like
               const lastContentIndex = content.length - 1;
-              const contentWithCache = content[lastContentIndex] as ContentBlockWithCache;
-              contentWithCache.cache_control = { type: 'ephemeral' };
+              const lastBlock = content[lastContentIndex] as any;
+              if (lastBlock && typeof lastBlock === 'object' && 'type' in lastBlock) {
+                if (
+                  lastBlock.type === 'text' ||
+                  lastBlock.type === 'tool_use' ||
+                  lastBlock.type === 'tool_result'
+                ) {
+                  lastBlock.cache_control = { type: 'ephemeral' };
+                }
+              }
 
               logger?.debug(
                 `AnthropicProvider: Added cache_control to last user message at index ${i} with type ${content[lastContentIndex].type}`,
