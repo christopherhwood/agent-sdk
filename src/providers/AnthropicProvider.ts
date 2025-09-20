@@ -240,7 +240,7 @@ async function injectVisionMessages(
   model: string,
   logger?: Logger,
 ): Promise<LLM.Messages.MessageParam[]> {
-  // Assume model supports vision; inject when attachments are present
+  // Inject attachments as images if supported, otherwise as text captions
 
   const MAX_BYTES = 10 * 1024 * 1024; // 10MB
   const augmented: LLM.Messages.MessageParam[] = [];
@@ -268,7 +268,9 @@ async function injectVisionMessages(
       : [];
     if (images.length === 0) continue;
 
-    const parts: any[] = [];
+    const supportsImages = (process.env.LLM_SUPPORTS_IMAGES || 'true').toLowerCase() !== 'false';
+    const urls: string[] = [];
+    const alts: string[] = [];
     for (const att of images) {
       let url: string | undefined = att.url;
       if (!url && att.dataBase64) {
@@ -303,22 +305,145 @@ async function injectVisionMessages(
         }
       }
       if (!url) continue;
-
+      urls.push(url);
       if (att.alt && typeof att.alt === 'string' && att.alt.trim().length > 0) {
-        parts.push({ type: 'text', text: att.alt });
+        alts.push(att.alt.trim());
       }
-      parts.push({ type: 'image_url', image_url: { url } });
     }
 
-    if (parts.length > 0) {
-      augmented.push({ role: 'user', content: parts } as unknown as LLM.Messages.MessageParam);
-      logger?.info('Injected vision user message after tool_result', LogCategory.MODEL, {
-        images: parts.filter(p => p.type === 'image_url').length,
-      });
+    if (urls.length > 0) {
+      if (supportsImages) {
+        const parts: any[] = [];
+        for (const alt of alts) parts.push({ type: 'text', text: alt });
+        for (const url of urls) parts.push({ type: 'image_url', image_url: { url } });
+        augmented.push({ role: 'user', content: parts } as unknown as LLM.Messages.MessageParam);
+        logger?.info('Injected vision user message after tool_result', LogCategory.MODEL, {
+          images: urls.length,
+        });
+      } else {
+        try {
+          const captions = await captionImages(urls, logger);
+          const parts: any[] = [];
+          for (const alt of alts) parts.push({ type: 'text', text: alt });
+          for (const cap of captions)
+            if (cap && cap.trim()) parts.push({ type: 'text', text: `Image: ${cap.trim()}` });
+          if (parts.length > 0) {
+            augmented.push({
+              role: 'user',
+              content: parts,
+            } as unknown as LLM.Messages.MessageParam);
+            logger?.info(
+              'Injected caption text in place of images (vision unsupported)',
+              LogCategory.MODEL,
+              { captions: captions.length },
+            );
+          }
+        } catch (e) {
+          logger?.warn('Captioning failed; skipping vision injection', LogCategory.MODEL, {
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
     }
   }
 
   return augmented;
+}
+
+// Remove image_url parts from messages when vision is not supported
+/**
+ *
+ * @param original
+ * @param logger
+ */
+async function sanitizeNoVision(
+  original: LLM.Messages.MessageParam[],
+  logger?: Logger,
+): Promise<LLM.Messages.MessageParam[]> {
+  const cleaned: LLM.Messages.MessageParam[] = [];
+  for (const msg of original) {
+    if (!Array.isArray(msg.content)) {
+      cleaned.push(msg);
+      continue;
+    }
+    const contentArr = (msg.content as any[]) || [];
+    const urls: string[] = [];
+    const keepBlocks: any[] = [];
+    for (const c of contentArr) {
+      if (c && c.type === 'image_url' && c.image_url && typeof c.image_url.url === 'string') {
+        urls.push(c.image_url.url);
+      } else if (c) {
+        keepBlocks.push(c);
+      }
+    }
+
+    if (urls.length > 0) {
+      try {
+        const caps = await captionImages(urls, logger);
+        for (const cap of caps) {
+          if (cap && cap.trim()) keepBlocks.push({ type: 'text', text: `Image: ${cap.trim()}` });
+        }
+      } catch (e) {
+        logger?.warn('sanitizeNoVision: captionImages failed', LogCategory.MODEL, {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    if (keepBlocks.length === 0) {
+      // If we still have nothing, add a minimal neutral fallback
+      keepBlocks.push({ type: 'text', text: '(image content converted to text unavailable)' });
+    }
+    cleaned.push({ ...(msg as any), content: keepBlocks } as LLM.Messages.MessageParam);
+  }
+  return cleaned;
+}
+
+// Caption a list of images via an OpenAI-compatible endpoint
+/**
+ *
+ * @param urls
+ * @param logger
+ */
+async function captionImages(urls: string[], logger?: Logger): Promise<string[]> {
+  if (!urls || urls.length === 0) return [];
+  const apiKey = process.env.CAPTION_LLM_API_KEY || process.env.LLM_API_KEY;
+  const baseURL = (
+    process.env.CAPTION_LLM_BASE_URL ||
+    process.env.LLM_BASE_URL ||
+    'https://api.openai.com/v1'
+  ).replace(/\/$/, '');
+  const model = process.env.CAPTION_MODEL || 'gpt-4.1-mini';
+  const openai = new OpenAI({ apiKey, baseURL });
+  const parts: any[] = [
+    {
+      type: 'text',
+      text: 'Provide a concise caption (1–2 sentences) for each image. Return a JSON array of strings in order.',
+    },
+  ];
+  for (const url of urls) parts.push({ type: 'image_url', image_url: { url } });
+  const resp = await openai.chat.completions.create({
+    model,
+    temperature: 0.2,
+    messages: [
+      { role: 'system', content: 'You describe images succinctly for text-only models.' },
+      { role: 'user', content: parts as any },
+    ],
+  });
+  const text = resp.choices?.[0]?.message?.content?.toString?.() || '';
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed))
+      return parsed.map(v => (typeof v === 'string' ? v : JSON.stringify(v)));
+    if (parsed && Array.isArray((parsed as any).descriptions))
+      return (parsed as any).descriptions as string[];
+  } catch {
+    return text
+      .split(/\r?\n/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+  return [];
 }
 
 /**
@@ -1001,6 +1126,23 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
         );
       } catch (e) {
         logger?.warn('Vision injection failed; continuing without images', LogCategory.MODEL, {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+
+      // If images are not supported by the target model, strip any residual
+      // image_url parts that may exist in historical messages.
+      try {
+        const supportsImages =
+          (process.env.LLM_SUPPORTS_IMAGES || 'true').toLowerCase() !== 'false';
+        if (!supportsImages) {
+          apiParams.messages = await sanitizeNoVision(
+            apiParams.messages as LLM.Messages.MessageParam[],
+            logger,
+          );
+        }
+      } catch (e) {
+        logger?.warn('sanitizeNoVision failed; proceeding', LogCategory.MODEL, {
           error: e instanceof Error ? e.message : String(e),
         });
       }
