@@ -364,9 +364,9 @@ export class Agent {
       this._bus.on(BusEvent.TOOL_EXECUTION_STARTED, callbacks.onToolExecutionStarted);
     }
 
-    if (callbacks.onToolExecutionCompleted) {
-      this._bus.on(BusEvent.TOOL_EXECUTION_COMPLETED, callbacks.onToolExecutionCompleted);
-    }
+    // Intentionally do NOT bridge TOOL_EXECUTION_COMPLETED to the callback here.
+    // The completion callback is invoked via getToolFeedback() only, to avoid
+    // duplicate invocations (telemetry bridge + feedback path).
 
     if (callbacks.onToolExecutionError) {
       this._bus.on(BusEvent.TOOL_EXECUTION_ERROR, callbacks.onToolExecutionError);
