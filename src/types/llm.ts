@@ -7,6 +7,7 @@
  */
 
 import type { Logger } from '../utils/logger.js';
+import type { ImageCaptioner } from './captioning.js';
 
 import type { ModelProviderRequest, TokenManager } from './model.js';
 import type { ModelInfo } from './provider.js';
@@ -116,6 +117,7 @@ export interface LLMConfig {
   logger?: Logger;
   tokenManager?: TokenManager;
   cachingEnabled?: boolean;
+  captioner?: ImageCaptioner;
 }
 
 export type LLMProvider = (prompt: ModelProviderRequest) => Promise<Message>;

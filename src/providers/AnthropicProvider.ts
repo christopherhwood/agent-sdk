@@ -16,6 +16,7 @@
 // is proxied to OpenAI.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
 import type {
@@ -35,6 +36,7 @@ import type {
   ToolWithCache,
   SystemWithCache,
 } from '../types/llm.js';
+import type { ImageCaptioner } from '../types/captioning.js';
 import { LogCategory } from '../types/logger.js';
 import type { ModelProviderRequest } from '../types/model.js';
 import type { RemoteModelInfo, ModelInfo } from '../types/provider.js';
@@ -45,6 +47,52 @@ import { tokenManager as defaultTokenManager } from '../utils/TokenManager.js';
 dotenv.config();
 
 const LIST_MODELS_URL = process.env.LIST_MODELS_URL!;
+
+const CAPTION_CACHE_TTL_MS = Number.parseInt(process.env.CAPTION_CACHE_TTL_MS || '900000', 10);
+const CAPTION_CACHE_MAX_ENTRIES = Number.parseInt(
+  process.env.CAPTION_CACHE_MAX_ENTRIES || '500',
+  10,
+);
+
+type CaptionCacheEntry = {
+  caption: string;
+  updatedAt: number;
+};
+
+const captionCache: Map<string, CaptionCacheEntry> = new Map();
+
+/**
+ *
+ */
+function pruneCaptionCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of captionCache.entries()) {
+    if (now - entry.updatedAt > CAPTION_CACHE_TTL_MS) {
+      captionCache.delete(key);
+    }
+  }
+  if (captionCache.size <= CAPTION_CACHE_MAX_ENTRIES) return;
+  const excess = captionCache.size - CAPTION_CACHE_MAX_ENTRIES;
+  const keys = captionCache.keys();
+  for (let i = 0; i < excess; i++) {
+    const next = keys.next();
+    if (next.done) break;
+    captionCache.delete(next.value);
+  }
+}
+
+/**
+ *
+ * @param url
+ */
+function signatureForUrl(url: string): string {
+  if (url.startsWith('data:image/')) {
+    const comma = url.indexOf(',');
+    const payload = comma >= 0 ? url.slice(comma + 1) : url;
+    return createHash('sha256').update(payload).digest('hex');
+  }
+  return createHash('sha256').update(url).digest('hex');
+}
 
 // ---------------------------------------------------------------------------
 // OpenAI interop helpers
@@ -234,11 +282,15 @@ type ToolFeedback = {
  * @param original
  * @param model
  * @param logger
+ * @param captioner
+ * @param sessionId
  */
 async function injectVisionMessages(
   original: LLM.Messages.MessageParam[],
   model: string,
   logger?: Logger,
+  captioner?: ImageCaptioner,
+  sessionId?: string,
 ): Promise<LLM.Messages.MessageParam[]> {
   // Inject attachments as images if supported, otherwise as text captions
 
@@ -322,7 +374,7 @@ async function injectVisionMessages(
         });
       } else {
         try {
-          const captions = await captionImages(urls, logger);
+          const captions = await captionImages(urls, logger, captioner, sessionId);
           const parts: any[] = [];
           for (const alt of alts) parts.push({ type: 'text', text: alt });
           for (const cap of captions)
@@ -355,10 +407,14 @@ async function injectVisionMessages(
  *
  * @param original
  * @param logger
+ * @param captioner
+ * @param sessionId
  */
 async function sanitizeNoVision(
   original: LLM.Messages.MessageParam[],
   logger?: Logger,
+  captioner?: ImageCaptioner,
+  sessionId?: string,
 ): Promise<LLM.Messages.MessageParam[]> {
   const cleaned: LLM.Messages.MessageParam[] = [];
   for (const msg of original) {
@@ -379,7 +435,7 @@ async function sanitizeNoVision(
 
     if (urls.length > 0) {
       try {
-        const caps = await captionImages(urls, logger);
+        const caps = await captionImages(urls, logger, captioner, sessionId);
         for (const cap of caps) {
           if (cap && cap.trim()) keepBlocks.push({ type: 'text', text: `Image: ${cap.trim()}` });
         }
@@ -404,46 +460,162 @@ async function sanitizeNoVision(
  *
  * @param urls
  * @param logger
+ * @param captioner
+ * @param sessionId
  */
-async function captionImages(urls: string[], logger?: Logger): Promise<string[]> {
+async function captionImages(
+  urls: string[],
+  logger?: Logger,
+  captioner?: ImageCaptioner,
+  sessionId?: string,
+): Promise<string[]> {
   if (!urls || urls.length === 0) return [];
-  const apiKey = process.env.CAPTION_LLM_API_KEY || process.env.LLM_API_KEY;
-  const baseURL = (
-    process.env.CAPTION_LLM_BASE_URL ||
-    process.env.LLM_BASE_URL ||
-    'https://api.openai.com/v1'
-  ).replace(/\/$/, '');
-  const model = process.env.CAPTION_MODEL || 'gpt-4.1-mini';
-  const openai = new OpenAI({ apiKey, baseURL });
-  const parts: any[] = [
-    {
-      type: 'text',
-      text: 'Provide a concise caption (1–2 sentences) for each image. Return a JSON array of strings in order.',
-    },
-  ];
-  for (const url of urls) parts.push({ type: 'image_url', image_url: { url } });
-  const resp = await openai.chat.completions.create({
-    model,
-    temperature: 0.2,
-    messages: [
-      { role: 'system', content: 'You describe images succinctly for text-only models.' },
-      { role: 'user', content: parts as any },
-    ],
-  });
-  const text = resp.choices?.[0]?.message?.content?.toString?.() || '';
-  try {
-    const parsed = JSON.parse(text);
-    if (Array.isArray(parsed))
-      return parsed.map(v => (typeof v === 'string' ? v : JSON.stringify(v)));
-    if (parsed && Array.isArray((parsed as any).descriptions))
-      return (parsed as any).descriptions as string[];
-  } catch {
-    return text
-      .split(/\r?\n/)
-      .map(s => s.trim())
-      .filter(Boolean);
+
+  const now = Date.now();
+  pruneCaptionCache();
+
+  const order: Array<{ index: number; signature: string }> = urls.map((url, index) => ({
+    index,
+    signature: signatureForUrl(url),
+  }));
+  const hits: Array<{ index: number; caption: string }> = [];
+  const misses: Array<{ index: number; url: string; signature: string }> = [];
+
+  for (const { index, signature } of order) {
+    const entry = captionCache.get(signature);
+    if (entry && now - entry.updatedAt <= CAPTION_CACHE_TTL_MS) {
+      hits.push({ index, caption: entry.caption });
+    } else {
+      misses.push({ index, url: urls[index], signature });
+    }
   }
-  return [];
+
+  if (misses.length === 0) {
+    const captions = order
+      .sort((a, b) => a.index - b.index)
+      .map(({ signature }) => captionCache.get(signature)!.caption);
+    if (logger) {
+      try {
+        logger.info('captionImages cache hit', LogCategory.MODEL, {
+          sessionId,
+          requested: urls.length,
+        });
+      } catch {
+        // Intentionally empty - suppress logging errors
+      }
+    } else {
+      try {
+        console.info('[captionImages] cache hit', { sessionId, requested: urls.length });
+      } catch {
+        // Intentionally empty - suppress logging errors
+      }
+    }
+    return captions;
+  }
+
+  if (logger) {
+    try {
+      logger.info('captionImages cache status', LogCategory.MODEL, {
+        sessionId,
+        requested: urls.length,
+        hits: hits.length,
+        misses: misses.length,
+      });
+    } catch {
+      // Intentionally empty - suppress logging errors
+    }
+  } else {
+    try {
+      console.debug('[captionImages] cache status', {
+        sessionId,
+        requested: urls.length,
+        hits: hits.length,
+        misses: misses.length,
+      });
+    } catch {
+      // Intentionally empty - suppress logging errors
+    }
+  }
+
+  let freshCaptions: string[] | null = null;
+
+  if (captioner) {
+    try {
+      const inputs = misses.map(miss => ({ urlOrData: miss.url, sessionId }));
+      const custom = await captioner.describeImages(inputs);
+      if (Array.isArray(custom) && custom.length >= misses.length) {
+        freshCaptions = custom;
+      }
+    } catch (error) {
+      logger?.warn(
+        'Custom captioner failed; falling back to default implementation',
+        LogCategory.MODEL,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+  }
+  if (!freshCaptions) {
+    const apiKey = process.env.CAPTION_LLM_API_KEY || process.env.LLM_API_KEY;
+    const baseURL = (
+      process.env.CAPTION_LLM_BASE_URL ||
+      process.env.LLM_BASE_URL ||
+      'https://api.openai.com/v1'
+    ).replace(/\/$/, '');
+    const model = process.env.CAPTION_MODEL || 'gpt-4.1-mini';
+    const openai = new OpenAI({ apiKey, baseURL });
+    const parts: any[] = [
+      {
+        type: 'text',
+        text: 'Provide a concise caption (1–2 sentences) for each image. Return a JSON array of strings in order.',
+      },
+    ];
+    for (const miss of misses) parts.push({ type: 'image_url', image_url: { url: miss.url } });
+    const resp = await openai.chat.completions.create({
+      model,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: 'You describe images succinctly for text-only models.' },
+        { role: 'user', content: parts as any },
+      ],
+    });
+    const text = resp.choices?.[0]?.message?.content?.toString?.() || '';
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        freshCaptions = parsed.map(v => (typeof v === 'string' ? v : JSON.stringify(v)));
+      } else if (parsed && Array.isArray((parsed as any).descriptions)) {
+        freshCaptions = (parsed as any).descriptions as string[];
+      } else {
+        freshCaptions = text
+          .split(/\r?\n/)
+          .map(s => s.trim())
+          .filter(Boolean);
+      }
+    } catch {
+      freshCaptions = text
+        .split(/\r?\n/)
+        .map(s => s.trim())
+        .filter(Boolean);
+    }
+  }
+
+  const results: string[] = new Array(urls.length);
+  for (const hit of hits) {
+    results[hit.index] = hit.caption;
+  }
+
+  if (freshCaptions && freshCaptions.length > 0) {
+    for (let i = 0; i < misses.length; i++) {
+      const miss = misses[i];
+      const caption = freshCaptions[i] ?? '';
+      results[miss.index] = caption;
+      captionCache.set(miss.signature, { caption, updatedAt: Date.now() });
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -866,6 +1038,7 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
   const model = config.model || 'claude-3-7-sonnet';
   const maxTokens = config.maxTokens || 4096;
   const logger = config.logger;
+  const captioner = config.captioner;
 
   // Use the provided tokenManager or fall back to the default
   const tokenManager = config.tokenManager || defaultTokenManager;
@@ -1123,6 +1296,8 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
           apiParams.messages as LLM.Messages.MessageParam[],
           modelToUse,
           logger,
+          captioner,
+          prompt.sessionState?.id,
         );
       } catch (e) {
         logger?.warn('Vision injection failed; continuing without images', LogCategory.MODEL, {
@@ -1139,6 +1314,8 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
           apiParams.messages = await sanitizeNoVision(
             apiParams.messages as LLM.Messages.MessageParam[],
             logger,
+            captioner,
+            prompt.sessionState?.id,
           );
         }
       } catch (e) {

@@ -8,6 +8,7 @@
 import type { AgentConfig } from '@qckfx/sdk-schema';
 
 import { LLMFactory } from '../providers/index.js';
+import type { ImageCaptioner } from '../types/captioning.js';
 import type { BusEvents } from '../types/bus-events.js';
 import type { AgentCallbacks } from '../types/callbacks.js';
 import type { LogLevel } from '../types/logger.js';
@@ -26,12 +27,15 @@ type PartialAgentConfig = Partial<CoreAgentConfig>;
  * @param modelProvider The model provider to use
  * @param eventBus
  * @param callbacks
+ * @param options
+ * @param options.captioner
  * @returns A proper AgentConfig object
  */
 export function convertToCoreAgentConfig(
   jsonConfig: AgentConfig,
   eventBus: TypedEventEmitter<BusEvents>,
   callbacks?: AgentCallbacks,
+  options?: { captioner?: ImageCaptioner },
 ): CoreAgentConfig {
   // Do NOT clearSessionAborted() here - that will be done in AgentRunner after abort is handled
   // Why? Because:
@@ -42,6 +46,7 @@ export function convertToCoreAgentConfig(
   const modelProvider = LLMFactory.createProvider({
     model: jsonConfig.defaultModel,
     cachingEnabled: true,
+    captioner: options?.captioner,
   });
 
   // Create basic config with required properties

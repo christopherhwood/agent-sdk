@@ -24,6 +24,7 @@ import { convertToCoreAgentConfig } from './utils/agent-config-converter.js';
 import type { Logger } from './utils/logger.js';
 import { rollbackSession } from './utils/RollbackManager.js';
 import { setSessionAborted } from './utils/sessionUtils.js';
+import type { ImageCaptioner } from './types/captioning.js';
 
 // Import legacy event emitters
 import { TypedEventEmitter } from './utils/TypedEventEmitter.js';
@@ -133,21 +134,24 @@ export class Agent {
    * @param jsonConfig.config
    * @param callbacks Optional runtime callbacks for events and dynamic data
    * @param jsonConfig.callbacks
+   * @param jsonConfig.captioner
    * @returns A new Agent instance
    * @throws ConfigValidationError if the config is invalid
    */
   static async create({
     config,
     callbacks,
+    captioner,
   }: {
     config: AgentConfig;
     callbacks?: AgentCallbacks;
+    captioner?: ImageCaptioner;
   }): Promise<Agent> {
     // Validate the JSON config with Zod
     const validatedConfig = AgentConfigSchema.parse(config);
 
     // Create the agent instance (constructor will perform conversion)
-    const agent = new Agent({ jsonConfig: validatedConfig, callbacks });
+    const agent = new Agent({ jsonConfig: validatedConfig, callbacks, captioner });
     await agent._init();
     return agent;
   }
@@ -238,16 +242,21 @@ export class Agent {
    * @param config.jsonConfig
    * @param callbacks Optional runtime callbacks for events and dynamic data
    * @param config.callbacks
+   * @param config.captioner
    */
   private constructor({
     jsonConfig,
     callbacks,
+    captioner,
   }: {
     jsonConfig: AgentConfig;
     callbacks?: AgentCallbacks;
+    captioner?: ImageCaptioner;
   }) {
     this._bus = new TypedEventEmitter<BusEvents>();
-    this._config = convertToCoreAgentConfig(jsonConfig, this._bus, callbacks);
+    this._config = convertToCoreAgentConfig(jsonConfig, this._bus, callbacks, {
+      captioner,
+    });
     this._callbacks = callbacks;
     if (callbacks) {
       this._attachCallbacks(callbacks);
