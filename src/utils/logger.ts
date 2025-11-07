@@ -182,12 +182,17 @@ export class Logger {
 
     if (this.shouldLog(LogLevel.ERROR, category)) {
       const categoryPrefix = category ? `[${category}] ` : '';
-      console.error(
-        this.format('ERROR', `${categoryPrefix}${message} ${data ? JSON.stringify(data) : ''}`),
-      );
-      if (error && this.level === LogLevel.DEBUG) {
-        console.error(error);
+      let errorDetails = '';
+      if (error) {
+        const err = error as Error;
+        errorDetails = `\n  Error: ${err.message || String(error)}`;
+        if (err.stack) {
+          errorDetails += `\n  Stack: ${err.stack}`;
+        }
       }
+      console.error(
+        this.format('ERROR', `${categoryPrefix}${message} ${data ? JSON.stringify(data) : ''}${errorDetails}`),
+      );
     }
   }
 }

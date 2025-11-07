@@ -252,7 +252,8 @@ export class RemoteExecutionAdapter implements ExecutionAdapter {
     if (isBase64Binary) {
       // Convert base64 to buffer for binary files
       const buffer = Buffer.from(content, 'base64');
-      const result = await this.sandbox.files.write(filepath, buffer);
+      const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+      const result = await this.sandbox.files.write(filepath, arrayBuffer);
       this.logger?.debug(`writeFile (binary) result: ${result}`, LogCategory.TOOLS);
     } else {
       // Write as text for regular files
@@ -275,7 +276,12 @@ export class RemoteExecutionAdapter implements ExecutionAdapter {
     });
   }
 
-  async glob(executionId: string, pattern: string, _options?: any): Promise<string[]> {
+  async glob(
+    executionId: string,
+    pattern: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    _options?: any,
+  ): Promise<string[]> {
     try {
       // First try using the glob command if it exists
       const globCheck = await this.sandbox.commands.run('which glob || echo "not_found"');

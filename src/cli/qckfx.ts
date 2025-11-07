@@ -18,7 +18,6 @@ import path from 'path';
 import { AgentConfigSchema } from '@qckfx/sdk-schema';
 import { Command } from 'commander';
 import ora from 'ora';
-import prompts from 'prompts';
 import { ZodError } from 'zod';
 
 import { Agent } from '../Agent.js';

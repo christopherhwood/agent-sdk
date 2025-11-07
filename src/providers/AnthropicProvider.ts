@@ -32,7 +32,6 @@ import type {
   LLM,
   LLMConfig,
   LLMProvider,
-  ContentBlockWithCache,
   ToolWithCache,
   SystemWithCache,
 } from '../types/llm.js';
@@ -62,7 +61,7 @@ type CaptionCacheEntry = {
 const captionCache: Map<string, CaptionCacheEntry> = new Map();
 
 /**
- *
+ * Prunes expired entries from the caption cache based on TTL and max entries
  */
 function pruneCaptionCache(): void {
   const now = Date.now();
@@ -82,8 +81,9 @@ function pruneCaptionCache(): void {
 }
 
 /**
- *
- * @param url
+ * Generates a SHA256 hash signature for a given URL or data URL
+ * @param {string} url - The URL or data URL to generate a signature for
+ * @returns {string} The SHA256 hash signature
  */
 function signatureForUrl(url: string): string {
   if (url.startsWith('data:image/')) {
@@ -101,29 +101,37 @@ function signatureForUrl(url: string): string {
 /**
  * Convert Anthropic tool format (name/description/input_schema) → OpenAI
  * function tools format.
- */
-
-/**
- *
- * @param tools
+ * @param {LLM.Tool[] | undefined} tools - The tools to convert
+ * @returns {ChatCompletionTool[] | undefined} The converted tools in OpenAI format
  */
 function convertToolsToOpenAI(tools?: LLM.Tool[]): ChatCompletionTool[] | undefined {
   if (!tools) return undefined;
-  return tools.map(t => ({
-    type: 'function',
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.input_schema,
-    },
-  }));
+  return tools.map(t => {
+    const toolWithCache = t as ToolWithCache;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any = {
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.input_schema,
+      },
+    };
+    if (toolWithCache.cache_control) {
+      result.cache_control = toolWithCache.cache_control;
+    }
+    return result;
+  });
 }
 
 /**
  * Convert a single Anthropic message → OpenAI chat message object.
- * @param msg
+ * @param {LLM.Messages.MessageParam} msg - The Anthropic message to convert
+ * @returns {ChatCompletionMessageParam | ChatCompletionMessageParam[]} The converted message(s)
  */
-function convertMessageToOpenAI(msg: LLM.Messages.MessageParam): ChatCompletionMessageParam {
+function convertMessageToOpenAI(
+  msg: LLM.Messages.MessageParam,
+): ChatCompletionMessageParam | ChatCompletionMessageParam[] {
   const role = msg.role;
 
   // Helper to collapse text blocks into a single string
@@ -131,7 +139,9 @@ function convertMessageToOpenAI(msg: LLM.Messages.MessageParam): ChatCompletionM
     if (typeof content === 'string') return content;
 
     return content
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .filter((c): c is LLM.Messages.TextBlock => (c as any).type === 'text')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .map(c => (c as any).text)
       .join('\n');
   };
@@ -162,45 +172,83 @@ function convertMessageToOpenAI(msg: LLM.Messages.MessageParam): ChatCompletionM
             },
           },
         ],
-      } as unknown as ChatCompletionMessageParam; // Cast to satisfy structural match
+      } as unknown as ChatCompletionMessageParam;
     }
   }
 
   if (role === 'user') {
-    // Tool results in Anthropic are stored as user role with tool_result type,
-    // but by the time they reach here they should be in the conversation with
-    // role 'tool'.  We'll simply stringify the content.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const contentArray = Array.isArray(msg.content) ? (msg.content as any[]) : undefined;
     const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-    // Try to locate the tool_use_id for linkage
     let tool_call_id: string | undefined;
-    if (
-      Array.isArray(msg.content) &&
-      msg.content.length > 0 &&
-      (msg.content[0] as any).tool_use_id
-    ) {
-      tool_call_id = (msg.content[0] as any).tool_use_id;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let toolResultBlock: any;
+    if (contentArray && contentArray.length > 0) {
+      for (const block of contentArray) {
+        if (block && typeof block === 'object' && block.type === 'tool_result' && block.tool_use_id) {
+          tool_call_id = block.tool_use_id;
+          toolResultBlock = block;
+          break;
+        }
+      }
     }
     if (tool_call_id) {
-      // Proper tool response message
-      return {
+      const toolMessage: ChatCompletionMessageParam = {
         role: 'tool',
-        content: contentStr,
+        content:
+          typeof toolResultBlock?.content === 'string'
+            ? toolResultBlock.content
+            : contentStr,
         tool_call_id,
-      } as unknown as ChatCompletionMessageParam;
+      };
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const textParts: any[] = [];
+      if (contentArray && contentArray.length > 0) {
+        for (const block of contentArray) {
+          if (block && typeof block === 'object' && block.type === 'text' && typeof block.text === 'string') {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const textPart: any = { type: 'text', text: block.text };
+            if (block.cache_control) {
+              textPart.cache_control = block.cache_control;
+            }
+            textParts.push(textPart);
+          }
+        }
+      }
+
+      if (textParts.length > 0) {
+        const userMessage = { role: 'user', content: textParts } as ChatCompletionMessageParam;
+        return [toolMessage, userMessage];
+      }
+
+      return toolMessage;
     }
 
     // Multimodal user message: pass through an array of text/image_url parts
     if (Array.isArray(msg.content)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const parts: any[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const c of msg.content as any[]) {
         if (c?.type === 'text' && typeof c.text === 'string') {
-          parts.push({ type: 'text', text: c.text });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const textPart: any = { type: 'text', text: c.text };
+          if (c.cache_control) {
+            textPart.cache_control = c.cache_control;
+          }
+          parts.push(textPart);
         } else if (c?.type === 'image_url' && c.image_url && typeof c.image_url.url === 'string') {
-          parts.push({ type: 'image_url', image_url: { url: c.image_url.url } });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const imagePart: any = { type: 'image_url', image_url: { url: c.image_url.url } };
+          if (c.cache_control) {
+            imagePart.cache_control = c.cache_control;
+          }
+          parts.push(imagePart);
         }
       }
       if (parts.length > 0) {
-        return { role: 'user', content: parts } as unknown as ChatCompletionMessageParam;
+        return { role: 'user', content: parts } as ChatCompletionMessageParam;
       }
     }
 
@@ -215,36 +263,63 @@ function convertMessageToOpenAI(msg: LLM.Messages.MessageParam): ChatCompletionM
 
   // Default: treat as a plain text message
   return {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     role: role as any, // 'user' | 'assistant' | 'system'
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     content: collapseText(msg.content as any),
   } as unknown as ChatCompletionMessageParam;
 }
 
 /**
  * Convert Anthropic API params to an OpenAI chat/completions request body.
- * @param apiParams
+ * @param {any} apiParams - The Anthropic API parameters to convert
+ * @returns {ChatCompletionCreateParams} The OpenAI request parameters
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function convertAnthropicRequestToOpenAI(apiParams: any): ChatCompletionCreateParams {
   const messages: ChatCompletionMessageParam[] = [];
 
   // Handle system prompt if provided
   if ('system' in apiParams && apiParams.system) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (typeof (apiParams as any).system === 'string') {
       messages.push({
         role: 'system',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         content: (apiParams as any).system,
       } as ChatCompletionMessageParam);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } else if (Array.isArray((apiParams as any).system)) {
-      const blocks = (apiParams as any).system as Array<{ text: string }>;
-      const systemText = blocks.map(b => b.text).join('\n');
-      messages.push({ role: 'system', content: systemText } as ChatCompletionMessageParam);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const blocks = (apiParams as any).system as Array<{ text: string; cache_control?: { type: string } }>;
+      if (blocks.some(b => b.cache_control)) {
+        messages.push({
+          role: 'system',
+          content: blocks.map(b => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const block: any = { type: 'text', text: b.text };
+            if (b.cache_control) {
+              block.cache_control = b.cache_control;
+            }
+            return block;
+          }),
+        } as ChatCompletionMessageParam);
+      } else {
+        const systemText = blocks.map(b => b.text).join('\n');
+        messages.push({ role: 'system', content: systemText } as ChatCompletionMessageParam);
+      }
     }
   }
 
   // Convert conversation history
   if (apiParams.messages) {
     for (const m of apiParams.messages) {
-      messages.push(convertMessageToOpenAI(m));
+      const converted = convertMessageToOpenAI(m);
+      if (Array.isArray(converted)) {
+        for (const entry of converted) messages.push(entry);
+      } else {
+        messages.push(converted);
+      }
     }
   }
 
@@ -278,12 +353,13 @@ type ToolFeedback = {
 };
 
 /**
- *
- * @param original
- * @param model
- * @param logger
- * @param captioner
- * @param sessionId
+ * Injects vision messages (images from tool_result attachments) into the conversation
+ * @param {LLM.Messages.MessageParam[]} original - Original message array
+ * @param {string} model - The model being used
+ * @param {Logger} [logger] - Logger instance
+ * @param {ImageCaptioner} [captioner] - Image captioner instance
+ * @param {string} [sessionId] - Session ID
+ * @returns {Promise<LLM.Messages.MessageParam[]>} Updated message array with vision content
  */
 async function injectVisionMessages(
   original: LLM.Messages.MessageParam[],
@@ -300,11 +376,14 @@ async function injectVisionMessages(
   for (const msg of original) {
     augmented.push(msg);
     if (msg.role !== 'user') continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const contentArr = Array.isArray(msg.content) ? (msg.content as any[]) : null;
     if (!contentArr || contentArr.length === 0) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const first = contentArr[0] as any;
     if (first?.type !== 'tool_result') continue;
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let parsed: any = undefined;
     try {
       parsed = JSON.parse(first.content ?? '{}');
@@ -365,6 +444,7 @@ async function injectVisionMessages(
 
     if (urls.length > 0) {
       if (supportsImages) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const parts: any[] = [];
         for (const alt of alts) parts.push({ type: 'text', text: alt });
         for (const url of urls) parts.push({ type: 'image_url', image_url: { url } });
@@ -375,6 +455,7 @@ async function injectVisionMessages(
       } else {
         try {
           const captions = await captionImages(urls, logger, captioner, sessionId);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const parts: any[] = [];
           for (const alt of alts) parts.push({ type: 'text', text: alt });
           for (const cap of captions)
@@ -402,13 +483,13 @@ async function injectVisionMessages(
   return augmented;
 }
 
-// Remove image_url parts from messages when vision is not supported
 /**
- *
- * @param original
- * @param logger
- * @param captioner
- * @param sessionId
+ * Removes image_url parts from messages when vision is not supported
+ * @param {LLM.Messages.MessageParam[]} original - Original message array
+ * @param {Logger} [logger] - Logger instance
+ * @param {ImageCaptioner} [captioner] - Image captioner instance
+ * @param {string} [sessionId] - Session ID
+ * @returns {Promise<LLM.Messages.MessageParam[]>} Sanitized message array without image content
  */
 async function sanitizeNoVision(
   original: LLM.Messages.MessageParam[],
@@ -422,8 +503,10 @@ async function sanitizeNoVision(
       cleaned.push(msg);
       continue;
     }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const contentArr = (msg.content as any[]) || [];
     const urls: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const keepBlocks: any[] = [];
     for (const c of contentArr) {
       if (c && c.type === 'image_url' && c.image_url && typeof c.image_url.url === 'string') {
@@ -450,18 +533,19 @@ async function sanitizeNoVision(
       // If we still have nothing, add a minimal neutral fallback
       keepBlocks.push({ type: 'text', text: '(image content converted to text unavailable)' });
     }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cleaned.push({ ...(msg as any), content: keepBlocks } as LLM.Messages.MessageParam);
   }
   return cleaned;
 }
 
-// Caption a list of images via an OpenAI-compatible endpoint
 /**
- *
- * @param urls
- * @param logger
- * @param captioner
- * @param sessionId
+ * Captions a list of images via an OpenAI-compatible endpoint or custom captioner
+ * @param {string[]} urls - Array of image URLs or data URLs to caption
+ * @param {Logger} [logger] - Logger instance
+ * @param {ImageCaptioner} [captioner] - Custom image captioner instance
+ * @param {string} [sessionId] - Session ID
+ * @returns {Promise<string[]>} Array of caption strings
  */
 async function captionImages(
   urls: string[],
@@ -565,6 +649,7 @@ async function captionImages(
     ).replace(/\/$/, '');
     const model = process.env.CAPTION_MODEL || 'gpt-4.1-mini';
     const openai = new OpenAI({ apiKey, baseURL });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const parts: any[] = [
       {
         type: 'text',
@@ -577,6 +662,7 @@ async function captionImages(
       temperature: 0.2,
       messages: [
         { role: 'system', content: 'You describe images succinctly for text-only models.' },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         { role: 'user', content: parts as any },
       ],
     });
@@ -621,7 +707,8 @@ async function captionImages(
 /**
  * Perform the Chat Completions request via the official OpenAI SDK instead of a
  * raw `fetch`.  This returns the strongly-typed `ChatCompletion` object.
- * @param sessionLlmApiKey
+ * @param {string} [sessionLlmApiKey] - Optional session-specific API key
+ * @returns {OpenAI} Configured OpenAI client instance
  */
 function getOpenAIClient(sessionLlmApiKey?: string): OpenAI {
   // Use the session API key if provided, otherwise fall back to environment variable
@@ -635,10 +722,11 @@ function getOpenAIClient(sessionLlmApiKey?: string): OpenAI {
 }
 
 /**
- *
- * @param requestBody
- * @param logger
- * @param llmApiKey
+ * Calls the OpenAI API with the given request parameters
+ * @param {ChatCompletionCreateParams} requestBody - The OpenAI request parameters
+ * @param {Logger} [logger] - Logger instance
+ * @param {string} [llmApiKey] - Optional session-specific API key
+ * @returns {Promise<ChatCompletion>} The OpenAI chat completion response
  */
 async function callOpenAI(
   requestBody: ChatCompletionCreateParams,
@@ -657,11 +745,12 @@ async function callOpenAI(
     const response = await openai.chat.completions.create(requestBody);
     return response as ChatCompletion;
   } catch (error: unknown) {
-    // The OpenAI SDK throws rich errors.  Normalise a subset of their fields so
-    // that the retry logic in `withRetryAndBackoff` continues to work.
+    logger?.error('OpenAI SDK error:', error as Error, LogCategory.MODEL);
+
     if (error && typeof error === 'object') {
       const err = error as { status?: number; message?: string };
       const normalised = new Error(err.message || 'OpenAI API error');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (err.status) (normalised as any).status = err.status;
       throw normalised;
     }
@@ -672,13 +761,15 @@ async function callOpenAI(
 /**
  * Convert an OpenAI ChatCompletion response back into Anthropic's Message
  * shape so that the rest of the codebase remains unchanged.
- * @param openaiResp
+ * @param {ChatCompletion} openaiResp - The OpenAI response to convert
+ * @returns {LLM.Messages.Message} The Anthropic-formatted message
  */
 function convertOpenAIResponseToAnthropic(openaiResp: ChatCompletion): LLM.Messages.Message {
   const choice = openaiResp.choices?.[0];
   const msg = choice?.message ?? {};
 
   // Build content blocks
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const contentBlocks: any[] = [];
 
   if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
@@ -719,6 +810,7 @@ function convertOpenAIResponseToAnthropic(openaiResp: ChatCompletion): LLM.Messa
       input_tokens: 0,
       output_tokens: 0,
     },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any; // Cast to satisfy structural typing
 
   return anthropicMessage;
@@ -758,9 +850,9 @@ function createModelListFetcher() {
 
   /**
    * Fetches the list of available models from the remote API
-   * @param llmKey
-   * @param logger
-   * @returns Promise with array of model information
+   * @param {string} [llmKey] - Optional API key
+   * @param {Logger} [logger] - Logger instance
+   * @returns {Promise<RemoteModelInfo[]>} Promise with array of model information
    */
   async function fetchModelList(llmKey?: string, logger?: Logger): Promise<RemoteModelInfo[]> {
     // If we already have an inflight request, return it
@@ -905,9 +997,9 @@ function createModelListFetcher() {
 
   /**
    * Returns the list of available models with their providers
-   * @param llmKey
-   * @param logger
-   * @returns Promise with array of model names and providers
+   * @param {string} [llmKey] - Optional API key
+   * @param {Logger} [logger] - Logger instance
+   * @returns {Promise<ModelInfo[]>} Promise with array of model names and providers
    */
   async function getAvailableModels(llmKey?: string, logger?: Logger): Promise<ModelInfo[]> {
     try {
@@ -957,12 +1049,12 @@ const DEFAULT_TARGET_TOKEN_LIMIT = DEFAULT_MAX_TOKEN_LIMIT / 2;
 
 /**
  * Exponential backoff implementation for rate limit handling
- * @param fn - Function to call with retry logic
- * @param maxRetries - Maximum number of retry attempts
- * @param initialDelay - Initial delay in milliseconds
- * @param maxDelay - Maximum delay cap in milliseconds
- * @param logger - Logger instance
- * @returns Result of the function call
+ * @param {() => Promise<T>} fn - Function to call with retry logic
+ * @param {number} [maxRetries=5] - Maximum number of retry attempts
+ * @param {number} [initialDelay=1000] - Initial delay in milliseconds
+ * @param {number} [maxDelay=30000] - Maximum delay cap in milliseconds
+ * @param {Logger} [logger] - Logger instance
+ * @returns {Promise<T>} Result of the function call
  */
 async function withRetryAndBackoff<T>(
   fn: () => Promise<T>,
@@ -1028,11 +1120,11 @@ async function withRetryAndBackoff<T>(
 
 /**
  * Creates a provider for Anthropic's Claude API
- * @param config - Configuration options
- * @returns The provider function
+ * @param {LLMConfig} config - Configuration options
+ * @returns {LLMProvider} The provider function
  */
 function createAnthropicProvider(config: LLMConfig): LLMProvider {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.LLM_API_KEY;
   const baseURL = (process.env.LLM_BASE_URL || 'https://api.anthropic.com/v1').replace(/\/$/, '');
 
   const model = config.model || 'claude-3-7-sonnet';
@@ -1046,6 +1138,7 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
   // By default, enable caching unless explicitly disabled
   const cachingEnabled = config.cachingEnabled !== undefined ? config.cachingEnabled : true;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const anthropic: any = null;
 
   // Create the model list fetcher
@@ -1180,6 +1273,7 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
             if (Array.isArray(content) && content.length > 0) {
               // Add cache_control to the last content block when it's text-like
               const lastContentIndex = content.length - 1;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const lastBlock = content[lastContentIndex] as any;
               if (lastBlock && typeof lastBlock === 'object' && 'type' in lastBlock) {
                 if (
@@ -1216,6 +1310,7 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
       }
 
       // Prepare API call parameters
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const apiParams: any = {
         model: modelToUse,
         max_tokens: maxTokens,
@@ -1342,8 +1437,50 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
         const openaiRequest = convertAnthropicRequestToOpenAI(apiParams);
 
         // ------------------------------------------------------------------
+        // Post-conversion: Ensure cache_control is preserved on last message
+        // ------------------------------------------------------------------
+        if (shouldUseCache && openaiRequest.messages && openaiRequest.messages.length > 0) {
+          const lastIndex = openaiRequest.messages.length - 1;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const lastMsg = openaiRequest.messages[lastIndex] as any;
+          const content = lastMsg.content;
+
+          if (Array.isArray(content) && content.length > 0) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const lastBlock = content[content.length - 1] as any;
+            if (lastBlock && typeof lastBlock === 'object' && !lastBlock.cache_control) {
+              lastBlock.cache_control = { type: 'ephemeral' };
+              logger?.debug(
+                'Added cache_control to last message content block after conversion',
+                LogCategory.MODEL,
+              );
+            }
+          } else if (typeof content === 'string' && content.length > 0) {
+            lastMsg.content = [
+              {
+                type: 'text',
+                text: content,
+                cache_control: { type: 'ephemeral' },
+              },
+            ];
+            logger?.debug(
+              'Converted last message to content block array with cache_control',
+              LogCategory.MODEL,
+            );
+          }
+        }
+
+        // ------------------------------------------------------------------
         // 2. Perform the network request to OpenAI with retry / back-off
         // ------------------------------------------------------------------
+
+        if (process.env.DEBUG_CACHE_REQUESTS === 'true') {
+          logger?.debug(
+            'Full OpenAI request body with cache controls',
+            LogCategory.MODEL,
+            JSON.stringify(openaiRequest, null, 2),
+          );
+        }
 
         // Get the LLM API key from session state if available
         const llmApiKey = prompt.sessionState?.llmApiKey;
@@ -1476,6 +1613,47 @@ function createAnthropicProvider(config: LLMConfig): LLMProvider {
 
           // Convert the request and call OpenAI
           const openaiRetryRequest = convertAnthropicRequestToOpenAI(apiParams);
+
+          // Post-conversion: Ensure cache_control is preserved on last message (retry path)
+          if (shouldUseCache && openaiRetryRequest.messages && openaiRetryRequest.messages.length > 0) {
+            const lastIndex = openaiRetryRequest.messages.length - 1;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const lastMsg = openaiRetryRequest.messages[lastIndex] as any;
+            const content = lastMsg.content;
+
+            if (Array.isArray(content) && content.length > 0) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const lastBlock = content[content.length - 1] as any;
+              if (lastBlock && typeof lastBlock === 'object' && !lastBlock.cache_control) {
+                lastBlock.cache_control = { type: 'ephemeral' };
+                logger?.debug(
+                  'Added cache_control to last message content block after conversion (retry)',
+                  LogCategory.MODEL,
+                );
+              }
+            } else if (typeof content === 'string' && content.length > 0) {
+              lastMsg.content = [
+                {
+                  type: 'text',
+                  text: content,
+                  cache_control: { type: 'ephemeral' },
+                },
+              ];
+              logger?.debug(
+                'Converted last message to content block array with cache_control (retry)',
+                LogCategory.MODEL,
+              );
+            }
+          }
+
+          if (process.env.DEBUG_CACHE_REQUESTS === 'true') {
+            logger?.debug(
+              'Full OpenAI retry request body with cache controls',
+              LogCategory.MODEL,
+              JSON.stringify(openaiRetryRequest, null, 2),
+            );
+          }
+
           const openaiRetryResponse = await withRetryAndBackoff(
             () => callOpenAI(openaiRetryRequest, logger, llmApiKey),
             3, // fewer retries for the second attempt
