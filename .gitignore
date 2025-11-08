@@ -19,6 +19,7 @@ types-test/
 # Environment files
 .env
 .env.*
+.npmrc
 
 # IDE files
 .idea/

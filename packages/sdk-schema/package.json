@@ -19,7 +19,8 @@
     "./schema": "./agent-config.schema.json"
   },
   "publishConfig": {
-    "access": "public"
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
   },
   "scripts": {
     "build:esm": "tsc -p tsconfig.json",
