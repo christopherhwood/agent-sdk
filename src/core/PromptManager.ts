@@ -242,7 +242,8 @@ DO NOT suggest using more tools - you have reached your limit for this interacti
    * @returns Formatted git state string
    */
   private formatSingleRepoGitState(repo: GitRepositoryInfo): string {
-    let gitState = `Git Repository: ${repo.isGitRepository ? 'Yes' : 'No'}`;
+    let gitState = `Current Date: ${new Date().toISOString()}`;
+    gitState += `\nGit Repository: ${repo.isGitRepository ? 'Yes' : 'No'}`;
 
     if (repo.isGitRepository) {
       gitState += `\nCurrent Branch: ${repo.currentBranch}`;
